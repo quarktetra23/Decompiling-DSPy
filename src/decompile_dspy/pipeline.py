@@ -64,11 +64,6 @@ class Advisor(dspy.Module):
 
 
 class Operator:
-    """
-    First version of DeGPT's R_ope:
-    - If new code fails gcc syntax, reject change.
-    Later we’ll add deeper checks (symbolic / tests), inspired by MSSC:contentReference[oaicite:6]{index=6}.
-    """
     def accept(self, c_code: str) -> tuple[bool, str]:
         ok, msg = gcc_syntax_check(c_code)
         return ok, msg
