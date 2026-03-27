@@ -1,6 +1,9 @@
+
 import json
 import re
 import dspy
+from dspy import load
+from src.decompile_dspy.dspy_module import Decompiler
 
 from .prompts import (
     R_REF_PROMPT,
@@ -11,9 +14,10 @@ from .prompts import (
 )
 from .compile_check import gcc_syntax_check
 
+compiled = load("compiled_dspy.json")
+
 
 def _parse_yes_no_triplet(text: str) -> tuple[bool, bool, bool]:
-    # expects: "Yes No Yes" etc.
     toks = re.findall(r"\b(yes|no)\b", text.lower())
     toks = toks[:3] + ["no"] * max(0, 3 - len(toks))
     return (toks[0] == "yes", toks[1] == "yes", toks[2] == "yes")
@@ -24,7 +28,7 @@ def _safe_json_map(text: str) -> dict[str, str]:
     # If it fails, return empty mapping.
     try:
         text2 = text.strip()
-        # Replace single quotes with double quotes cautiously
+
         if text2.startswith("{") and "'" in text2 and '"' not in text2:
             text2 = text2.replace("'", '"')
         obj = json.loads(text2)
@@ -34,7 +38,6 @@ def _safe_json_map(text: str) -> dict[str, str]:
 
 
 def _apply_rename_map(code: str, mapping: dict[str, str]) -> str:
-    # naive token-boundary replacement; good enough for v0
     for old, new in mapping.items():
         if not old or not new or old == new:
             continue
@@ -76,26 +79,27 @@ class DecompileRefinePipeline(dspy.Module):
         self.advisor = Advisor()
         self.operator = Operator()
 
-    def forward(self, ghidra_code: str):
-        # Step 0: always do a “full refine to compilable C” pass (fast win)
-        refined = self.advisor(REFINE_TO_COMPILABLE.format(code=ghidra_code)).text
-        ok, compile_msg = self.operator.accept(refined)
-        if not ok:
-            # fallback: if the “big rewrite” fails, just keep original and let steps try smaller edits
-            refined = ghidra_code
+    def forward(self, input_code: str):
+        # Use compiled model instead of old GPT call
+        result = compiled(assembly=input_code)
+        clean_code = result.code
 
-        # Step 1: decide which smaller optimizations are needed (DeGPT’s R_ref):contentReference[oaicite:7]{index=7}
-        dec = self.referee(refined)
+        # The rest of the pipeline can proceed as before, using clean_code
+        ok, compile_msg = self.operator.accept(clean_code)
+        if not ok:
+            clean_code = input_code
+
+        # Step 1: decide which smaller optimizations are needed (DeGPT’s R_ref)
+        dec = self.referee(clean_code)
         steps = []
         if dec.need_simplify: steps.append("simplify")
         if dec.need_comment: steps.append("comment")
         if dec.need_rename: steps.append("rename")
 
         # Step 2: apply in an order that tends to help later steps
-        # (DeGPT notes ordering matters because optimizations can help each other):contentReference[oaicite:8]{index=8}
         order = [s for s in ["simplify", "comment", "rename"] if s in steps]
 
-        current = refined
+        current = clean_code
         notes = {"initial_compile_ok": ok, "initial_compile_msg": compile_msg, "applied": []}
 
         for step in order:
