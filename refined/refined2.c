@@ -1,5 +1,5 @@
-#include <stdio.h>  // Include standard input-output library
+#include <stdio.h>
 
-int mainFunction(void) {  // Define a function named mainFunction that takes no arguments
-    return 10;    // Return the integer value 10
+unsigned int entry(void) {
+    return 5;
 }

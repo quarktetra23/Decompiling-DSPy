@@ -2,15 +2,10 @@
 
 
 
-int entry(void)
+// WARNING: Removing unreachable block (ram,0x000100000360)
+
+undefined4 entry(void)
 
 {
-  undefined4 local_8;
-  
-  for (local_8 = 0; local_8 < 10; local_8 = local_8 + 1) {
-  }
-  return local_8;
+  return 5;
 }
-
-
-
