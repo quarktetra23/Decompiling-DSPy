@@ -1,10 +1,10 @@
+
 import os
-os.environ["OPENAI_API_KEY"] = "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"
+from dotenv import load_dotenv
+load_dotenv()
 
 import dspy
 from dspy import LM
-
-# setup model
 lm = LM("openai/gpt-4o")
 dspy.settings.configure(lm=lm)
 
@@ -22,7 +22,7 @@ class Decompiler(dspy.Module):
     def forward(self, assembly):
         return self.predict(assembly=assembly)
 
-# test it
+
 decompiler = Decompiler()
 
 result = decompiler(

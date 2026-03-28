@@ -1,9 +1,6 @@
-
 import json
 import re
 import dspy
-from dspy import load
-from src.decompile_dspy.dspy_module import Decompiler
 
 from .prompts import (
     R_REF_PROMPT,
@@ -14,7 +11,11 @@ from .prompts import (
 )
 from .compile_check import gcc_syntax_check
 
-compiled = load("compiled_dspy.json")
+def _strip_code_fences(text: str) -> str:
+    text = text.strip()
+    text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+    text = re.sub(r"\n?```$", "", text)
+    return text.strip()
 
 
 def _parse_yes_no_triplet(text: str) -> tuple[bool, bool, bool]:
@@ -24,13 +25,12 @@ def _parse_yes_no_triplet(text: str) -> tuple[bool, bool, bool]:
 
 
 def _safe_json_map(text: str) -> dict[str, str]:
-    # Accept either {'a':'b'} or {"a":"b"}.
-    # If it fails, return empty mapping.
     try:
         text2 = text.strip()
 
         if text2.startswith("{") and "'" in text2 and '"' not in text2:
             text2 = text2.replace("'", '"')
+
         obj = json.loads(text2)
         return {str(k): str(v) for k, v in obj.items()} if isinstance(obj, dict) else {}
     except Exception:
@@ -44,7 +44,6 @@ def _apply_rename_map(code: str, mapping: dict[str, str]) -> str:
         code = re.sub(rf"\b{re.escape(old)}\b", new, code)
     return code
 
-
 class Referee(dspy.Module):
     def __init__(self):
         super().__init__()
@@ -53,7 +52,11 @@ class Referee(dspy.Module):
     def forward(self, code: str):
         out = self.predict(code=R_REF_PROMPT.format(code=code))
         simp, comm, ren = _parse_yes_no_triplet(out.decision)
-        return dspy.Prediction(need_simplify=simp, need_comment=comm, need_rename=ren)
+        return dspy.Prediction(
+            need_simplify=simp,
+            need_comment=comm,
+            need_rename=ren
+        )
 
 
 class Advisor(dspy.Module):
@@ -63,14 +66,12 @@ class Advisor(dspy.Module):
 
     def forward(self, prompt: str):
         out = self.predict(prompt=prompt)
-        return dspy.Prediction(text=out.out)
+        return dspy.Prediction(text=_strip_code_fences(out.out))
 
 
 class Operator:
     def accept(self, c_code: str) -> tuple[bool, str]:
-        ok, msg = gcc_syntax_check(c_code)
-        return ok, msg
-
+        return gcc_syntax_check(c_code)
 
 class DecompileRefinePipeline(dspy.Module):
     def __init__(self):
@@ -79,44 +80,79 @@ class DecompileRefinePipeline(dspy.Module):
         self.advisor = Advisor()
         self.operator = Operator()
 
-    def forward(self, input_code: str):
-        # Use compiled model instead of old GPT call
-        result = compiled(assembly=input_code)
-        clean_code = result.code
+    def _initial_refine(self, ghidra_code: str):
+        return self.advisor(
+            REFINE_TO_COMPILABLE.format(code=ghidra_code)
+        ).text
 
-        # The rest of the pipeline can proceed as before, using clean_code
-        ok, compile_msg = self.operator.accept(clean_code)
+    def forward(self, ghidra_code: str):
+        notes: dict = {"applied": []}
+        refined = self._initial_refine(ghidra_code)
+        ok, compile_msg = self.operator.accept(refined)
+
+        notes["initial_compile_ok"] = ok
+        notes["initial_compile_msg"] = compile_msg
+
+        # Retry once if it fails
         if not ok:
-            clean_code = input_code
+            retry = self._initial_refine(refined)
+            ok2, msg2 = self.operator.accept(retry)
 
-        # Step 1: decide which smaller optimizations are needed (DeGPT’s R_ref)
-        dec = self.referee(clean_code)
+            notes["retry_compile_ok"] = ok2
+            notes["retry_compile_msg"] = msg2
+
+            if ok2:
+                refined = retry
+                ok = True
+            else:
+                # fallback to original ghidra (safe baseline)
+                refined = ghidra_code
+                notes["fallback"] = "ghidra_used"
+
+        dec = self.referee(refined)
+
         steps = []
         if dec.need_simplify: steps.append("simplify")
         if dec.need_comment: steps.append("comment")
         if dec.need_rename: steps.append("rename")
 
-        # Step 2: apply in an order that tends to help later steps
         order = [s for s in ["simplify", "comment", "rename"] if s in steps]
 
-        current = clean_code
-        notes = {"initial_compile_ok": ok, "initial_compile_msg": compile_msg, "applied": []}
+        current = refined
 
         for step in order:
             if step == "simplify":
-                candidate = self.advisor(PROMPT_SIMPLIFY.format(code=current)).text
+                candidate = self.advisor(
+                    PROMPT_SIMPLIFY.format(code=current)
+                ).text
+
             elif step == "comment":
-                candidate = self.advisor(PROMPT_COMMENT.format(code=current)).text
+                candidate = self.advisor(
+                    PROMPT_COMMENT.format(code=current)
+                ).text
+
             else:  # rename
-                mapping_text = self.advisor(PROMPT_RENAME.format(code=current)).text
+                mapping_text = self.advisor(
+                    PROMPT_RENAME.format(code=current)
+                ).text
+
                 mapping = _safe_json_map(mapping_text)
                 candidate = _apply_rename_map(current, mapping)
 
             ok2, msg2 = self.operator.accept(candidate)
+
             if ok2:
                 current = candidate
                 notes["applied"].append({"step": step, "accepted": True})
             else:
-                notes["applied"].append({"step": step, "accepted": False, "why": msg2[:500]})
+                notes["applied"].append({
+                    "step": step,
+                    "accepted": False,
+                    "why": msg2[:300]
+                })
 
         return dspy.Prediction(final_c=current, debug=notes)
+    
+
+
+    
