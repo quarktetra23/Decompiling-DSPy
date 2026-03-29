@@ -1,6 +1,9 @@
-#include <stdio.h> // Include standard input-output library
-
-int mainFunction(void) // Function declaration for 'mainFunction' which takes no parameters
+unsigned int _main(void)
 {
-    return 10; // Return integer value 10
+    unsigned int index;
+    unsigned int status;
+
+    status = 0;
+    for (index = 0; index < 10; index += 1); // Loop from 0 to 9
+    return index; // Returns 10, as 'index' is incremented after the last iteration
 }

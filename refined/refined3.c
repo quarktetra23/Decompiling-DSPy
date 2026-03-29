@@ -1,11 +1,13 @@
-#include <stdio.h> // Include standard input/output library
+#include <string.h>
 
-int entry(void) { // Define function 'entry' that returns an integer
-    int total = 0; // Initialize variable 'total' to 0
+int main(void)
+{
+    int counter = 0;  // Initialize to 0
+    unsigned int *accumulator = (unsigned int *)&counter;
 
-    for (int index = 0; index < 5; index++) { // Loop from 0 to 4
-        total += index; // Add the current value of 'index' to 'total'
+    for (; counter < 5; counter++)
+    {
+        accumulator[1] += counter;  // Accumulate the sum of counter in accumulator[1]
     }
-
-    return total; // Return the final value of 'total'
+    return accumulator[1];  // Return the accumulated value
 }
