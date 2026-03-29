@@ -18,6 +18,7 @@ def _strip_code_fences(text: str) -> str:
     return text.strip()
 
 
+
 def _parse_yes_no_triplet(text: str) -> tuple[bool, bool, bool]:
     toks = re.findall(r"\b(yes|no)\b", text.lower())
     toks = toks[:3] + ["no"] * max(0, 3 - len(toks))
@@ -42,6 +43,13 @@ def _apply_rename_map(code: str, mapping: dict[str, str]) -> str:
         if not old or not new or old == new:
             continue
         code = re.sub(rf"\b{re.escape(old)}\b", new, code)
+    return code
+
+
+def _normalize_main_signature(code: str) -> str:
+    code = re.sub(r'\bunsigned\s+long\s+long\s+_main\s*\(\s*void\s*\)', 'int main(void)', code)
+    code = re.sub(r'\bunsigned\s+int\s+_main\s*\(\s*void\s*\)', 'int main(void)', code)
+    code = re.sub(r'\bint\s+_main\s*\(\s*void\s*\)', 'int main(void)', code)
     return code
 
 class Referee(dspy.Module):

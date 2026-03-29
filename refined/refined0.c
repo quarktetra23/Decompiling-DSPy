@@ -1,5 +1,5 @@
-#include <stdio.h>
-
-int main(void) {
+unsigned long long _main(void)
+{
     return 0;
 }
+

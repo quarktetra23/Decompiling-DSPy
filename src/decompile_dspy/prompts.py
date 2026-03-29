@@ -56,7 +56,7 @@ Rules:
 - Do NOT guess if uncertain
 - Prefer no rename over a risky rename
 - Return ONLY a JSON object mapping old names to new names
-- If no safe renames exist, return {}
+- If no safe renames exist, return {{}}
 
 Code:
 {code}
