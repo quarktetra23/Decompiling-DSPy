@@ -24,13 +24,13 @@ def main():
     lm = dspy.LM(model=os.getenv("DSPY_MODEL", "gpt-4o-mini"))
     dspy.settings.configure(lm=lm)
 
-    ghidra_code = sample_path.read_text(encoding="utf-8")
+    angr_code = sample_path.read_text(encoding="utf-8")
 
-    print("====== Ghidra input ======")
-    print(ghidra_code)
+    print("====== angr input ======")
+    print(angr_code)
 
     pipe = DecompileRefinePipeline()
-    out = pipe(ghidra_code=ghidra_code)
+    out = pipe(angr_code=angr_code)
 
     print("\n====== Final C code ======")
     print(out.final_c)
@@ -54,4 +54,3 @@ if __name__ == "__main__":
 
 
 
-    

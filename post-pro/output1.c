@@ -1,13 +1,10 @@
-#include "out.h"
-
-
-
-int entry(void)
-
+unsigned int _main(void)
 {
-  undefined4 local_8;
-  
-  for (local_8 = 0; local_8 < 10; local_8 = local_8 + 1) {
-  }
-  return local_8;
+    unsigned int i;  // [bp-0x8]
+    unsigned int flag;  // [bp-0x4]
+
+    flag = 0;
+    for (i = 0; 10 > i; i += 1);
+    return i;
 }
+

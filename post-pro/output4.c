@@ -1,30 +1,29 @@
-#include "out.h"
-
-
-
-int _f(int param_1)
-
+unsigned int _f(unsigned int a0)
 {
-  int iVar1;
-  undefined4 local_18;
-  
-  local_18 = param_1;
-  if (1 < param_1) {
-    local_18 = _f(param_1 + -1);
-    iVar1 = _f(param_1 + -2);
-    local_18 = local_18 + iVar1;
-  }
-  return local_18;
+    unsigned int v0;  // [bp-0x1c]
+    unsigned int v1;  // [bp-0x18]
+    char *v2;  // [bp-0x10]
+    char v3;  // [bp+0x0]
+
+    v2 = &v3;
+    if (1 < a0)
+    {
+        v0 = _f(a0 - 1);
+        v1 = v0 + _f(a0 - 2);
+        return v1;
+    }
+    v1 = a0;
+    return v1;
 }
 
-
-
-void entry(void)
-
+unsigned int _main(void)
 {
-  _f(5);
-  return;
+    unsigned int flag;  // [bp-0x14]
+    char *v1;  // [bp-0x10]
+    char v2;  // [bp+0x0]
+
+    v1 = &v2;
+    flag = 0;
+    return _f(5);
 }
-
-
 

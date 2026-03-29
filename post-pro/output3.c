@@ -1,19 +1,12 @@
-#include "out.h"
-
-
-
-int entry(void)
-
+int _main(void)
 {
-  undefined4 local_c;
-  undefined4 local_8;
-  
-  local_8 = 0;
-  for (local_c = 0; local_c < 5; local_c = local_c + 1) {
-    local_8 = local_8 + local_c;
-  }
-  return local_8;
+    int i;  // [bp-0xc]
+
+    memset(&i, 0, 12);
+    for (; 5 > *((unsigned int *)(&i + 0)); *((unsigned int *)&i) = *((unsigned int *)(&i + 0)) + 1)
+    {
+        *((unsigned int *)&(&i)[4]) = *((unsigned int *)(&i + 4)) + *((unsigned int *)(&i + 0));
+    }
+    return *((unsigned int *)(&i + 4));
 }
-
-
 

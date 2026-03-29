@@ -80,14 +80,14 @@ class DecompileRefinePipeline(dspy.Module):
         self.advisor = Advisor()
         self.operator = Operator()
 
-    def _initial_refine(self, ghidra_code: str):
+    def _initial_refine(self, angr_code: str):
         return self.advisor(
-            REFINE_TO_COMPILABLE.format(code=ghidra_code)
+            REFINE_TO_COMPILABLE.format(code=angr_code)
         ).text
 
-    def forward(self, ghidra_code: str):
+    def forward(self, angr_code: str):
         notes: dict = {"applied": []}
-        refined = self._initial_refine(ghidra_code)
+        refined = self._initial_refine(angr_code)
         ok, compile_msg = self.operator.accept(refined)
 
         notes["initial_compile_ok"] = ok
@@ -105,9 +105,9 @@ class DecompileRefinePipeline(dspy.Module):
                 refined = retry
                 ok = True
             else:
-                # fallback to original ghidra (safe baseline)
-                refined = ghidra_code
-                notes["fallback"] = "ghidra_used"
+                # fallback to original angr (safe baseline)
+                refined = angr_code
+                notes["fallback"] = "angr_used"
 
         dec = self.referee(refined)
 
@@ -155,4 +155,3 @@ class DecompileRefinePipeline(dspy.Module):
     
 
 
-    

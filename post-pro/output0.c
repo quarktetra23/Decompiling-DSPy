@@ -1,7 +1,5 @@
-#include "out.h"
-
-undefined8 entry(void)
-
+unsigned long long _main(void)
 {
-  return 0;
+    return 0;
 }
+
