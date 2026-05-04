@@ -12,6 +12,10 @@ from .prompts import (
 from .compile_check import gcc_syntax_check
 
 
+def _fill_prompt(template: str, code: str) -> str:
+    return template.replace("{code}", code)
+
+
 def _strip_code_fences(text: str) -> str:
     text = text.strip()
     text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
@@ -22,38 +26,54 @@ def _strip_code_fences(text: str) -> str:
 def _parse_yes_no_triplet(text: str) -> tuple[bool, bool, bool]:
     toks = re.findall(r"\b(yes|no)\b", text.lower())
     toks = toks[:3] + ["no"] * max(0, 3 - len(toks))
-    return (toks[0] == "yes", toks[1] == "yes", toks[2] == "yes")
+
+    return (
+        toks[0] == "yes",
+        toks[1] == "yes",
+        toks[2] == "yes",
+    )
 
 
 def _safe_json_map(text: str) -> dict[str, str]:
     try:
         text = _strip_code_fences(text)
+
         start = text.find("{")
         end = text.rfind("}")
 
         if start != -1 and end != -1:
             text = text[start:end + 1]
 
-        if text.startswith("{") and "'" in text and '"' not in text:
-            text = text.replace("'", '"')
-
         obj = json.loads(text)
 
         if not isinstance(obj, dict):
             return {}
 
-        return {str(k).strip(): str(v).strip() for k, v in obj.items()}
+        return {
+            str(k).strip(): str(v).strip()
+            for k, v in obj.items()
+            if str(k).strip() and str(v).strip()
+        }
+
     except Exception:
         return {}
 
 
+# ------------------------------------------------------------
+# C CODE STRUCTURE HELPERS
+# ------------------------------------------------------------
+
 def _extract_function_names(code: str) -> list[str]:
-    pattern = r"^\s*(?:[A-Za-z_][\w\s\*\d]*?)\s+([A-Za-z_]\w*)\s*\([^;]*\)\s*\{"
+    pattern = (
+        r"^\s*"
+        r"(?:[A-Za-z_][\w\s\*\d]*?)"
+        r"\s+"
+        r"([A-Za-z_]\w*)"
+        r"\s*\([^;]*\)"
+        r"\s*\{"
+    )
+
     return re.findall(pattern, code, flags=re.MULTILINE)
-
-
-def _count_top_level_functions(code: str) -> int:
-    return len(_extract_function_names(code))
 
 
 def _has_duplicate_code(code: str) -> bool:
@@ -69,8 +89,8 @@ def _has_duplicate_code(code: str) -> bool:
     if left and left == right:
         return True
 
-    main_count = len(re.findall(r"\b_main\s*\(", code))
-    if main_count > 2:
+    main_like_count = len(re.findall(r"\b_main\s*\(", code))
+    if main_like_count > 2:
         return True
 
     return False
@@ -80,17 +100,19 @@ def _added_forbidden_wrapper(original: str, candidate: str) -> bool:
     original_funcs = set(_extract_function_names(original))
     candidate_funcs = set(_extract_function_names(candidate))
 
+    # Do not add a new main if the input only had _main.
     if "main" not in original_funcs and "main" in candidate_funcs:
         return True
 
+    # Do not add printing/logging.
     if "printf" in candidate and "printf" not in original:
         return True
 
+    # Be strict about new includes.
     if "#include" in candidate and "#include" not in original:
-        # This is intentionally strict. Your current pipeline was adding
-        # stdio/string includes and wrappers too freely.
         return True
 
+    # Do not add multiple new functions.
     if len(candidate_funcs) > len(original_funcs) + 1:
         return True
 
@@ -101,8 +123,21 @@ def _call_sequence(code: str) -> list[str]:
     names = re.findall(r"\b([A-Za-z_]\w*)\s*\(", code)
 
     keywords = {
-        "if", "for", "while", "switch", "return", "sizeof",
-        "int", "char", "long", "short", "float", "double", "void"
+        "if",
+        "for",
+        "while",
+        "switch",
+        "return",
+        "sizeof",
+        "int",
+        "char",
+        "long",
+        "short",
+        "float",
+        "double",
+        "void",
+        "unsigned",
+        "signed",
     }
 
     return [name for name in names if name not in keywords]
@@ -112,10 +147,13 @@ def _removed_important_calls(original: str, candidate: str) -> bool:
     original_calls = _call_sequence(original)
     candidate_calls = _call_sequence(candidate)
 
-    protected = [
-        name for name in original_calls
-        if name.startswith("_") or name in {"printf", "strcpy", "strcmp", "strlen"}
-    ]
+    protected = []
+
+    for name in original_calls:
+        if name.startswith("_"):
+            protected.append(name)
+        elif name in {"printf", "strcpy", "strcmp", "strlen", "malloc", "free"}:
+            protected.append(name)
 
     for name in protected:
         if name not in candidate_calls:
@@ -127,7 +165,7 @@ def _removed_important_calls(original: str, candidate: str) -> bool:
 def _sanitize_candidate(original: str, candidate: str) -> str:
     candidate = _strip_code_fences(candidate)
 
-    # Remove accidental duplicated full output.
+    # Remove accidental duplicated full output if it is exactly doubled.
     half = len(candidate) // 2
     left = candidate[:half].strip()
     right = candidate[half:].strip()
@@ -157,18 +195,34 @@ def _is_candidate_safe(original: str, candidate: str) -> tuple[bool, str]:
     candidate_funcs = _extract_function_names(candidate)
 
     if original_funcs and candidate_funcs:
-        # Do not allow changing the main recovered function name.
         if original_funcs[0] != candidate_funcs[0]:
             return False, "candidate changed primary function name"
 
     return True, ""
 
 
+# ------------------------------------------------------------
+# RENAME SAFETY
+# ------------------------------------------------------------
+
 def _bad_new_name(new: str) -> bool:
     risky_words = {
-        "request", "response", "user", "token", "admin", "role",
-        "path", "body", "password", "database", "socket", "file",
-        "client", "server", "price", "count", "method"
+        "request",
+        "response",
+        "user",
+        "token",
+        "admin",
+        "role",
+        "path",
+        "body",
+        "password",
+        "database",
+        "socket",
+        "file",
+        "client",
+        "server",
+        "price",
+        "method",
     }
 
     lowered = new.lower()
@@ -176,15 +230,33 @@ def _bad_new_name(new: str) -> bool:
     return any(word in lowered for word in risky_words)
 
 
+def _declared_local_names(code: str) -> set[str]:
+    names = set()
+
+    # Examples:
+    # unsigned int v0;
+    # char *v2;
+    # long long result;
+    declaration_pattern = (
+        r"\b"
+        r"(?:unsigned\s+|signed\s+)?"
+        r"(?:int|char|long|short|float|double|uint128_t)"
+        r"(?:\s+long)?"
+        r"\s+"
+        r"(?:\*+\s*)?"
+        r"([A-Za-z_]\w*)"
+        r"\b"
+    )
+
+    for name in re.findall(declaration_pattern, code):
+        names.add(name)
+
+    return names
+
+
 def _apply_rename_map(code: str, mapping: dict[str, str]) -> str:
     safe_mapping: dict[str, str] = {}
-
-    declared_names = set(
-        re.findall(
-            r"\b(?:int|char|long|short|float|double|unsigned|signed)\s+(?:\*+\s*)?([A-Za-z_]\w*)\b",
-            code
-        )
-    )
+    declared_names = _declared_local_names(code)
 
     for old, new in mapping.items():
         if not old or not new or old == new:
@@ -196,10 +268,16 @@ def _apply_rename_map(code: str, mapping: dict[str, str]) -> str:
         if not re.match(r"^[A-Za-z_]\w*$", new):
             continue
 
-        if old not in declared_names and not re.match(r"^v\d+$|^flag$|^cur$", old):
+        # Only rename local-looking variables.
+        if old not in declared_names and not re.match(r"^v\d+$|^flag$|^cur$|^i$|^j$", old):
             continue
 
+        # Avoid business-meaning hallucinations.
         if _bad_new_name(new):
+            continue
+
+        # Do not rename functions.
+        if re.search(rf"\b{re.escape(old)}\s*\(", code):
             continue
 
         safe_mapping[old] = new
@@ -210,19 +288,25 @@ def _apply_rename_map(code: str, mapping: dict[str, str]) -> str:
     return code
 
 
+# ------------------------------------------------------------
+# DSPy MODULES
+# ------------------------------------------------------------
+
 class Referee(dspy.Module):
     def __init__(self):
         super().__init__()
         self.predict = dspy.Predict("code -> decision")
 
     def forward(self, code: str):
-        out = self.predict(code=R_REF_PROMPT.format(code=code))
-        simp, comm, ren = _parse_yes_no_triplet(out.decision)
+        prompt = _fill_prompt(R_REF_PROMPT, code)
+        out = self.predict(code=prompt)
+
+        need_simplify, need_comment, need_rename = _parse_yes_no_triplet(out.decision)
 
         return dspy.Prediction(
-            need_simplify=simp,
-            need_comment=comm,
-            need_rename=ren
+            need_simplify=need_simplify,
+            need_comment=need_comment,
+            need_rename=need_rename,
         )
 
 
@@ -241,6 +325,10 @@ class Operator:
         return gcc_syntax_check(c_code)
 
 
+# ------------------------------------------------------------
+# MAIN PIPELINE
+# ------------------------------------------------------------
+
 class DecompileRefinePipeline(dspy.Module):
     def __init__(self):
         super().__init__()
@@ -249,14 +337,14 @@ class DecompileRefinePipeline(dspy.Module):
         self.operator = Operator()
 
     def _initial_refine(self, angr_code: str) -> str:
-        return self.advisor(
-            REFINE_TO_COMPILABLE.format(code=angr_code)
-        ).text
+        prompt = _fill_prompt(REFINE_TO_COMPILABLE, angr_code)
+        return self.advisor(prompt).text
 
     def _try_accept(self, original: str, candidate: str) -> tuple[bool, str, str]:
         candidate = _sanitize_candidate(original, candidate)
 
         safe, reason = _is_candidate_safe(original, candidate)
+
         if not safe:
             return False, candidate, reason
 
@@ -268,9 +356,13 @@ class DecompileRefinePipeline(dspy.Module):
         return True, candidate, ""
 
     def forward(self, angr_code: str):
-        notes: dict = {"applied": []}
+        notes: dict = {
+            "applied": [],
+        }
 
-        # Initial cleanup must be conservative.
+        # ----------------------------------------------------
+        # Step 1: Initial conservative cleanup
+        # ----------------------------------------------------
         candidate = self._initial_refine(angr_code)
         ok, refined, msg = self._try_accept(angr_code, candidate)
 
@@ -278,62 +370,101 @@ class DecompileRefinePipeline(dspy.Module):
         notes["initial_compile_msg"] = msg
 
         if not ok:
-            # Safe fallback: use angr output.
             refined = angr_code
             notes["fallback"] = "angr_used_after_initial_reject"
 
-        dec = self.referee(refined)
+        # ----------------------------------------------------
+        # Step 2: Referee decides which transformations to try
+        # ----------------------------------------------------
+        decision = self.referee(refined)
 
         steps = []
-        if dec.need_simplify:
+
+        if decision.need_simplify:
             steps.append("simplify")
-        if dec.need_rename:
+
+        if decision.need_rename:
             steps.append("rename")
-        if dec.need_comment:
+
+        if decision.need_comment:
             steps.append("comment")
 
-        # Better order:
-        # 1. simplify structure
-        # 2. rename safely
-        # 3. comment final code
-        order = [s for s in ["simplify", "rename", "comment"] if s in steps]
+        # Keep transformations ordered and predictable.
+        order = [
+            step for step in ["simplify", "rename", "comment"]
+            if step in steps
+        ]
 
         current = refined
 
+        # ----------------------------------------------------
+        # Step 3: Apply selected transformations with guards
+        # ----------------------------------------------------
         for step in order:
             if step == "simplify":
-                raw_candidate = self.advisor(
-                    PROMPT_SIMPLIFY.format(code=current)
-                ).text
+                prompt = _fill_prompt(PROMPT_SIMPLIFY, current)
+                raw_candidate = self.advisor(prompt).text
 
             elif step == "rename":
-                mapping_text = self.advisor(
-                    PROMPT_RENAME.format(code=current)
-                ).text
-
+                prompt = _fill_prompt(PROMPT_RENAME, current)
+                mapping_text = self.advisor(prompt).text
                 mapping = _safe_json_map(mapping_text)
-                raw_candidate = _apply_rename_map(current, mapping)
 
                 notes["rename_map_raw"] = mapping
 
+                raw_candidate = _apply_rename_map(current, mapping)
+
+            elif step == "comment":
+                prompt = _fill_prompt(PROMPT_COMMENT, current)
+                raw_candidate = self.advisor(prompt).text
+
             else:
-                raw_candidate = self.advisor(
-                    PROMPT_COMMENT.format(code=current)
-                ).text
+                continue
 
             ok2, checked_candidate, msg2 = self._try_accept(current, raw_candidate)
 
             if ok2:
                 current = checked_candidate
-                notes["applied"].append({
-                    "step": step,
-                    "accepted": True
-                })
+                notes["applied"].append(
+                    {
+                        "step": step,
+                        "accepted": True,
+                    }
+                )
             else:
-                notes["applied"].append({
-                    "step": step,
-                    "accepted": False,
-                    "why": msg2[:300]
-                })
+                notes["applied"].append(
+                    {
+                        "step": step,
+                        "accepted": False,
+                        "why": msg2[:300],
+                    }
+                )
 
-        return dspy.Prediction(final_c=current, debug=notes)
+        return dspy.Prediction(
+            final_c=current,
+            debug=notes,
+        )
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
