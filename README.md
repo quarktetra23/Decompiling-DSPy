@@ -12,9 +12,9 @@ pip install -r requirements.txt
 
 ## Project Strcuture
 
-Decompiling-DSPy
-src - Source code
-tests - Test cases
-docs - Documentation
-README.md - This file
+1. Decompiling-DSPy
+2. src - Source code
+3. tests - Test cases
+4. docs - Documentation
+5. README.md - This file
 
